@@ -13,6 +13,10 @@ package object dstlr {
   // Row for mapping from WikiData property ID to relation name
   case class KnowledgeGraphMappingRow(property: String, relation: String)
 
+  case class TrainingData(relation: String, confidence: Double, factual: Boolean, sub: EntityData, obj: EntityData, tokens: List[String])
+
+  case class EntityData(start: Int, end: Int, text: String, entityType: String, link: String, normalized: String)
+
   class Conf(args: Seq[String]) extends ScallopConf(args) with Serialization {
 
     // I/O
@@ -32,7 +36,7 @@ package object dstlr {
     // Neo4j
     val neoUri = opt[String](name = "neo4j.uri", default = Some("bolt://localhost:7687"))
     val neoUsername = opt[String](name = "neo4j.username", default = Some("neo4j"))
-    val neoPassword = opt[String](name = "neo4j.password", default = Some("neo4j"))
+    val neoPassword = opt[String](name = "neo4j.password", default = Some("password"))
     val neoBatchSize = opt[Int](name = "neo4j.batch.size", default = Some(10000))
 
     verify()

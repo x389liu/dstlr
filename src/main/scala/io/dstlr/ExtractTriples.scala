@@ -1,14 +1,13 @@
 package io.dstlr
 
-import java.util.{Properties, UUID}
+import java.util.Properties
 
 import edu.stanford.nlp.ie.util.RelationTriple
 import edu.stanford.nlp.ling.CoreAnnotations
-import edu.stanford.nlp.pipeline.{CoreDocument, CoreEntityMention, StanfordCoreNLP}
+import edu.stanford.nlp.pipeline.{CoreDocument, CoreEntityMention, CoreSentence, StanfordCoreNLP}
 import edu.stanford.nlp.simple.Document
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.sql.{Dataset, SparkSession}
-import org.jsoup.Jsoup
 
 import scala.collection.JavaConversions._
 import scala.collection.mutable.{ListBuffer, Map => MMap}
@@ -68,10 +67,9 @@ object ExtractTriples {
       .mapPartitions(part => {
 
         // The extracted triples
-        val triples = new ListBuffer[TripleRow]()
+        val triples = new ListBuffer[TrainingData]()
 
-        // UUIDs for entities consistent within documents
-        val uuids = MMap[String, UUID]()
+        val mentions = MMap[String, CoreEntityMention]()
 
         val mapped = part.map(row => {
 
@@ -80,8 +78,8 @@ object ExtractTriples {
           // The extracted triples
           triples.clear()
 
-          // UUIDs for entities consistent within documents
-          uuids.clear()
+          // Mentions
+          mentions.clear()
 
           // Increment # of docs
           doc_acc.add(1)
@@ -95,22 +93,17 @@ object ExtractTriples {
             // Increment # tokens
             token_acc.add(doc.tokens().size())
 
-            // For eacn sentence...
+            // For each sentence...
             doc.sentences().foreach(sentence => {
+
               sentence.entityMentions().foreach(mention => {
-
-                // Get or set the UUID
-                val uuid = uuids.getOrElseUpdate(toLemmaString(mention), UUID.randomUUID()).toString
-
-                triples.append(buildMention(row.id, uuid, mention))
-                triples.append(buildLinksTo(row.id, uuid, mention.entity()))
-
+                mentions.put(toLemmaString(mention), mention)
               })
 
               // Extract the relations between entities.
-              sentence.relations().foreach(relation => {
-                if (uuids.contains(relation.subjectLemmaGloss()) && uuids.contains(relation.objectLemmaGloss())) {
-                  triples.append(buildRelation(row.id, uuids, relation))
+              sentence.relations().filter(relation => relation.relationGloss() == "per:date_of_death").foreach(relation => {
+                if (mentions.contains(relation.subjectLemmaGloss()) && mentions.contains(relation.objectLemmaGloss())) {
+                  triples.append(buildRelation(row.id, sentence, mentions, relation))
                 }
               })
             })
@@ -148,19 +141,8 @@ object ExtractTriples {
 
     import spark.implicits._
 
-    // Parse JSON -> map to (id, list of content) -> filter out non-paragraphs -> map to HTML-less strings -> concat paragraphs into document
-    //    spark.sparkContext.textFile(conf.input())
-    //      .map(ujson.read(_))
-    //      .map(json => (json("id").str, json("contents").arr.filter(_ != ujson.Null)))
-    //      .map(json => (json._1, json._2.filter(x => x.obj.getOrDefault("type", "").str == "sanitized_html")))
-    //      .map(json => (json._1, json._2.filter(x => x.obj.getOrDefault("subtype", "").str == "paragraph")))
-    //      .map(json => (json._1, json._2.map(x => Jsoup.parse(x.obj.getOrDefault("content", "").str).text())))
-    //      .map(json => (json._1, json._2.mkString(" ")))
-    //      .toDF("id", "contents")
-    //      .as[DocumentRow]
-
     // Test data
-    spark.sparkContext.parallelize(Seq("Barack Obama was born on August 4th, 1961.", "Apple is based in Cupertino."))
+    spark.sparkContext.parallelize(Seq("Steven Hawking died on March 14, 2018. He died on 14 March 2018."))
       .zipWithIndex()
       .map(_.swap)
       .toDF("id", "contents")
@@ -217,10 +199,35 @@ object ExtractTriples {
     new TripleRow(doc, "Mention", mention, "LINKS_TO", "Entity", uri, null)
   }
 
-  def buildRelation(doc: String, uuids: MMap[String, UUID], triple: RelationTriple): TripleRow = {
-    val sub = uuids.getOrDefault(triple.subjectLemmaGloss(), null).toString
-    val rel = triple.relationGloss().replaceAll(":", "_").toUpperCase()
-    val obj = uuids.getOrDefault(triple.objectLemmaGloss(), null).toString
-    new TripleRow(doc, "Mention", sub, rel, "Mention", obj, Map("confidence" -> triple.confidenceGloss()))
+  def buildRelation(doc: String, sentence: CoreSentence, mentions: MMap[String, CoreEntityMention], triple: RelationTriple): TrainingData = {
+
+    val sub = new EntityData(
+      triple.subjectTokenSpan().first(),
+      triple.subjectTokenSpan().second(),
+      triple.subjectGloss(),
+      mentions(triple.subjectLemmaGloss()).entityType(),
+      mentions(triple.subjectLemmaGloss()).entity(),
+      null
+    )
+
+    val entityType = mentions(triple.objectLemmaGloss()).entityType()
+    var normalized: String = null
+
+    // If the entity is annotated by SUTIME, save the normalized time.
+    if (entityType == "DATE" || entityType == "DURATION" || entityType == "TIME" || entityType == "SET") {
+      normalized = mentions(triple.objectLemmaGloss()).coreMap().get(classOf[CoreAnnotations.NormalizedNamedEntityTagAnnotation])
+    }
+
+    val obj = new EntityData(
+      triple.objectTokenSpan().first(),
+      triple.objectTokenSpan().second(),
+      triple.objectGloss(),
+      mentions(triple.objectLemmaGloss()).entityType(),
+      mentions(triple.objectLemmaGloss()).entity(),
+      normalized
+    )
+
+    new TrainingData(triple.relationGloss(), triple.confidence, false, sub, obj, sentence.tokens().map(_.originalText()).toList)
+
   }
 }

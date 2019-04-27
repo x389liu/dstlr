@@ -4,7 +4,7 @@ import java.text.SimpleDateFormat
 
 import com.softwaremill.sttp._
 import org.apache.hadoop.fs.{FileSystem, Path}
-import org.apache.spark.sql.{Row, SparkSession}
+import org.apache.spark.sql.SparkSession
 import ujson.Value
 
 import scala.collection.mutable.{ListBuffer, Map => MMap}
@@ -36,74 +36,64 @@ object EnrichTriples {
     // Delete old output directory
     FileSystem.get(spark.sparkContext.hadoopConfiguration).delete(new Path(conf.output()), true)
 
-    val entities = spark.read.parquet(conf.input()).as[TripleRow]
+    val result = spark.read.parquet(conf.input()).as[TrainingData]
       .repartition(conf.partitions())
-      .filter($"relation" === "LINKS_TO" && $"objectValue".isNotNull)
-      .select($"objectValue")
-      .distinct()
-
-    val result = entities
-      .mapPartitions(part => {
+      .map(row => {
 
         // Standard HTTP backend
         implicit val backend = HttpURLConnectionBackend()
 
-        part.grouped(50).map(group => {
+        // Holds extracted triples
+        val list = ListBuffer[TrainingData]()
 
-          // Holds extracted triples
-          val list = ListBuffer[TripleRow]()
+        try {
 
-          try {
+          val id2title = mapTitle(row.sub.link)
 
-            val id2title = mapTitles(group)
+          val ids = id2title.keys.mkString("|")
 
-            val ids = id2title.keys.mkString("|")
+          val resp = sttp.get(uri"https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${ids}&languages=en&format=json").send()
+          val json = ujson.read(resp.unsafeBody)
 
-            val resp = sttp.get(uri"https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${ids}&languages=en&format=json").send()
-            val json = ujson.read(resp.unsafeBody)
+          val entities = json("entities")
 
-            val entities = json("entities")
+          entities.obj
+            .filter(entity => id2title.contains(entity._1))
+            .foreach(entity => {
 
-            entities.obj
-              .filter(entity => id2title.contains(entity._1))
-              .foreach(entity => {
+              val (id, content) = entity
 
-                val (id, content) = entity
+              val title = id2title.get(id).get
+              val claims = content("claims")
 
-                val title = id2title.get(id).get
-                val claims = content("claims")
+              println(s"###\n# ${id} -> ${title}\n###")
 
-                println(s"###\n# ${id} -> ${title}\n###")
-
-                mapping.value.foreach(map => {
-                  val (property, relation) = map
-                  if (claims.obj.contains(property)) {
-                    println(s"${property} -> ${relation}")
-                    try {
-                      relation match {
-                        case "CITY_OF_HEADQUARTERS" => list.append(extractHeadquarters(title, relation, claims(property)))
-                        case _ => // DUMMY
-                      }
-                    } catch {
-                      case t: Throwable => println(s"Error processing ${id} - ${t}")
+              mapping.value.foreach(map => {
+                val (property, relation) = map
+                if (claims.obj.contains(property)) {
+                  println(s"${property} -> ${relation}")
+                  try {
+                    relation match {
+                      case "per:date_of_death" => list.append(extractDeathDate(row, claims(property)))
+                      case _ => // DUMMY
                     }
+                  } catch {
+                    case t: Throwable => println(s"Error processing ${id} - ${t}")
                   }
-                })
+                }
               })
+            })
 
-          } catch {
-            case e: Exception => {
-              println(s"Error processing group (${group})")
-              println(e)
-            }
+        } catch {
+          case e: Exception => {
+            println(s"Error processing group (${row})")
+            println(e)
           }
+        }
 
-          // Return triples
-          list
+        list.head
 
-        })
       })
-      .flatMap(x => x)
 
     result.write.parquet(conf.output())
 
@@ -111,15 +101,12 @@ object EnrichTriples {
 
   }
 
-  def mapTitles(group: Seq[Row]): Map[String, String] = {
+  def mapTitle(group: String): Map[String, String] = {
 
     // Standard HTTP backend
     implicit val backend = HttpURLConnectionBackend()
 
-    // Wiki APIs takes "|" delimited titles
-    val titles = group.map(_.getString(0)).mkString("|")
-
-    val resp = sttp.get(uri"https://en.wikipedia.org/w/api.php?action=query&prop=pageprops&ppprop=wikibase_item&redirects=1&format=json&titles=${titles}").send()
+    val resp = sttp.get(uri"https://en.wikipedia.org/w/api.php?action=query&prop=pageprops&ppprop=wikibase_item&redirects=1&format=json&titles=${group}").send()
     val json = ujson.read(resp.unsafeBody)
 
     val normalized = MMap[String, String]()
@@ -155,9 +142,9 @@ object EnrichTriples {
     new TripleRow("wiki", "Entity", uri, relation, "Fact", printFormat.format(date), null)
   }
 
-  def extractDeathDate(uri: String, relation: String, json: Value): TripleRow = {
+  def extractDeathDate(row: TrainingData, json: Value): TrainingData = {
     val date = dateFormat.parse(json(0)("mainsnak")("datavalue")("value")("time").str)
-    new TripleRow("wiki", "Entity", uri, relation, "Fact", printFormat.format(date), null)
+    new TrainingData(row.relation, row.confidence, (printFormat.format(date) == row.obj.normalized), row.sub, row.obj, row.tokens)
   }
 
   def extractHeadquarters(uri: String, relation: String, json: Value): TripleRow = {
