@@ -38,7 +38,6 @@ object EnrichTriples {
 
     val result = spark.read.parquet(conf.input()).as[TrainingData]
       .repartition(conf.partitions())
-      .filter(row => row.sub.link != null && row.sub.link.nonEmpty)
       .map(row => {
 
         // Standard HTTP backend
@@ -47,49 +46,53 @@ object EnrichTriples {
         // Holds extracted triples
         val list = ListBuffer[TrainingData]()
 
-        try {
+        if (row.sub.link != null) {
+          try {
 
-          val id2title = mapTitle(row.sub.link)
+            val id2title = mapTitle(row.sub.link)
 
-          val ids = id2title.keys.mkString("|")
+            val ids = id2title.keys.mkString("|")
 
-          val resp = sttp.get(uri"https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${ids}&languages=en&format=json").send()
-          val json = ujson.read(resp.unsafeBody)
+            val resp = sttp.get(uri"https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${ids}&languages=en&format=json").send()
+            val json = ujson.read(resp.unsafeBody)
 
-          val entities = json("entities")
+            val entities = json("entities")
 
-          entities.obj
-            .filter(entity => id2title.contains(entity._1))
-            .foreach(entity => {
+            entities.obj
+              .filter(entity => id2title.contains(entity._1))
+              .foreach(entity => {
 
-              val (id, content) = entity
+                val (id, content) = entity
 
-              val title = id2title.get(id).get
-              val claims = content("claims")
+                val title = id2title.get(id).get
+                val claims = content("claims")
 
-              println(s"###\n# ${id} -> ${title}\n###")
+                println(s"###\n# ${id} -> ${title}\n###")
 
-              mapping.value.foreach(map => {
-                val (property, relation) = map
-                if (claims.obj.contains(property)) {
-                  println(s"${property} -> ${relation}")
-                  try {
-                    relation match {
-                      case "per:date_of_death" => list.append(extractDeathDate(row, claims(property)))
-                      case _ => // DUMMY
+                mapping.value.foreach(map => {
+                  val (property, relation) = map
+                  if (claims.obj.contains(property)) {
+                    println(s"${property} -> ${relation}")
+                    try {
+                      relation match {
+                        case "per:date_of_death" => list.append(extractDeathDate(row, claims(property)))
+                        case _ => // DUMMY
+                      }
+                    } catch {
+                      case t: Throwable => println(s"Error processing ${id} - ${t}")
                     }
-                  } catch {
-                    case t: Throwable => println(s"Error processing ${id} - ${t}")
                   }
-                }
+                })
               })
-            })
 
-        } catch {
-          case e: Exception => {
-            println(s"Error processing group (${row})")
-            println(e)
+          } catch {
+            case e: Exception => {
+              println(s"Error processing group (${row})")
+              println(e)
+            }
           }
+        } else {
+          list.append(row)
         }
 
         list
