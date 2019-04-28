@@ -9,7 +9,7 @@ import edu.stanford.nlp.ling.CoreAnnotations.DocDateAnnotation
 import edu.stanford.nlp.pipeline.{CoreDocument, CoreEntityMention, CoreSentence, StanfordCoreNLP}
 import edu.stanford.nlp.simple.Document
 import org.apache.hadoop.fs.{FileSystem, Path}
-import org.apache.spark.sql.{Dataset, SparkSession}
+import org.apache.spark.sql.{Dataset, Row, SparkSession}
 
 import scala.collection.JavaConversions._
 import scala.collection.mutable.{ListBuffer, Map => MMap}
@@ -65,9 +65,9 @@ object ExtractTriples {
 
     val result = ds
       .repartition(conf.partitions())
-      .filter(doc => doc.id != null && doc.id.nonEmpty)
-      .filter(doc => doc.contents != null && doc.contents.nonEmpty)
-      .filter(doc => new Document(doc.contents).sentences().forall(_.tokens().size() <= conf.sentLengthThreshold()))
+      .filter(doc => doc.getAs[String]("id") != null && doc.getAs[String]("id").nonEmpty)
+      .filter(doc => doc.getAs[String]("contents") != null && doc.getAs[String]("contents").nonEmpty)
+      .filter(doc => new Document(doc.getAs[String]("contents")).sentences().forall(_.tokens().size() <= conf.sentLengthThreshold()))
       .mapPartitions(part => {
 
         // The extracted triples
@@ -77,7 +77,7 @@ object ExtractTriples {
 
         val mapped = part.map(row => {
 
-          println(s"${System.currentTimeMillis()} - Processing ${row.id} on ${Thread.currentThread().getName()}")
+          println(s"${System.currentTimeMillis()} - Processing ${row.getAs[String]("id")} on ${Thread.currentThread().getName()}")
 
           // The extracted triples
           triples.clear()
@@ -91,10 +91,14 @@ object ExtractTriples {
           try {
 
             // Create and annotate the CoreNLP Document
-            val doc = new CoreDocument(row.contents)
+            val doc = new CoreDocument(row.getAs[String]("contents"))
 
-            if (row.published_date != null && row.published_date >= 0) {
-              doc.annotation().set(classOf[DocDateAnnotation], printFormat.format(new Date(row.published_date)))
+            try {
+              if (row.getAs[Long]("published_date") != null && row.getAs[Long]("published_date") >= 0) {
+                doc.annotation().set(classOf[DocDateAnnotation], printFormat.format(new Date(row.getAs[Long]("published_date"))))
+              }
+            } catch {
+              case e: Exception => println(s"No error parsing published_date from ${row.getAs("id")}")
             }
 
             nlp.annotate(doc)
@@ -112,13 +116,13 @@ object ExtractTriples {
               // Extract the relations between entities.
               sentence.relations().filter(relation => relation.relationGloss() == "per:date_of_death").foreach(relation => {
                 if (mentions.contains(relation.subjectLemmaGloss()) && mentions.contains(relation.objectLemmaGloss())) {
-                  triples.append(buildRelation(row.id, sentence, mentions, relation))
+                  triples.append(buildRelation(row.getAs[String]("id"), sentence, mentions, relation))
                 }
               })
             })
 
           } catch {
-            case e: Exception => println(s"Exception when processing ${row.id} - ${e}")
+            case e: Exception => println(s"Exception when processing ${row.getAs[String]("id")} - ${e}")
           }
 
           // Increment # triples
@@ -146,7 +150,7 @@ object ExtractTriples {
 
   }
 
-  def text(spark: SparkSession, conf: Conf): Dataset[DocumentRow] = {
+  def text(spark: SparkSession, conf: Conf): Dataset[Row] = {
 
     import spark.implicits._
 
@@ -155,11 +159,10 @@ object ExtractTriples {
       .zipWithIndex()
       .map(_.swap)
       .toDF("id", "contents")
-      .as[DocumentRow]
 
   }
 
-  def solr(spark: SparkSession, conf: Conf): Dataset[DocumentRow] = {
+  def solr(spark: SparkSession, conf: Conf): Dataset[Row] = {
 
     import spark.implicits._
 
@@ -174,7 +177,6 @@ object ExtractTriples {
     spark.read.format("solr")
       .options(options)
       .load()
-      .as[DocumentRow]
 
   }
 
