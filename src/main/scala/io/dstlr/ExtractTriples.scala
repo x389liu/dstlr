@@ -1,9 +1,11 @@
 package io.dstlr
 
-import java.util.Properties
+import java.text.SimpleDateFormat
+import java.util.{Date, Properties}
 
 import edu.stanford.nlp.ie.util.RelationTriple
 import edu.stanford.nlp.ling.CoreAnnotations
+import edu.stanford.nlp.ling.CoreAnnotations.DocDateAnnotation
 import edu.stanford.nlp.pipeline.{CoreDocument, CoreEntityMention, CoreSentence, StanfordCoreNLP}
 import edu.stanford.nlp.simple.Document
 import org.apache.hadoop.fs.{FileSystem, Path}
@@ -26,6 +28,8 @@ object ExtractTriples {
       setProperty("parse.model", "edu/stanford/nlp/models/srparser/englishSR.ser.gz")
     }
   })
+
+  val printFormat = new SimpleDateFormat("yyyy-MM-dd")
 
   def main(args: Array[String]): Unit = {
 
@@ -88,6 +92,11 @@ object ExtractTriples {
 
             // Create and annotate the CoreNLP Document
             val doc = new CoreDocument(row.contents)
+
+            if (row.published_date != null && row.published_date >= 0) {
+              doc.annotation().set(classOf[DocDateAnnotation], printFormat.format(new Date(row.published_date / 1000L)))
+            }
+
             nlp.annotate(doc)
 
             // Increment # tokens
@@ -142,7 +151,7 @@ object ExtractTriples {
     import spark.implicits._
 
     // Test data
-    spark.sparkContext.parallelize(Seq("Steven Hawking died on March 14, 2018. He died on 14 March 2018."))
+    spark.sparkContext.parallelize(Seq("Steven Hawking died on March 14, 2018. He died on 14 March 2018.", "Joseph S. Handler died on April 14, 2019."))
       .zipWithIndex()
       .map(_.swap)
       .toDF("id", "contents")

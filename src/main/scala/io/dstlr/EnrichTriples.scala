@@ -76,11 +76,13 @@ object EnrichTriples {
                     try {
                       relation match {
                         case "per:date_of_death" => list.append(extractDeathDate(row, claims(property)))
-                        case _ => // DUMMY
+                        case _ => list.append(row)
                       }
                     } catch {
                       case t: Throwable => println(s"Error processing ${id} - ${t}")
                     }
+                  } else {
+                    list.append(row)
                   }
                 })
               })

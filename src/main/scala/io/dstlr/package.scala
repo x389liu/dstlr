@@ -5,7 +5,7 @@ import org.rogach.scallop.{ScallopConf, Serialization}
 package object dstlr {
 
   // Row for spark-solr results based on Anserini's schema
-  case class DocumentRow(id: String, contents: String)
+  case class DocumentRow(id: String, contents: String, published_date: Long)
 
   // Row for the CoreNLP extractions
   case class TripleRow(doc: String, subjectType: String, subjectValue: String, relation: String, objectType: String, objectValue: String, meta: Map[String, String])
