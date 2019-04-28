@@ -92,9 +92,10 @@ object EnrichTriples {
           }
         }
 
-        list.head
+        list
 
       })
+      .flatMap(x => x)
 
     result.write.json(conf.output())
 
