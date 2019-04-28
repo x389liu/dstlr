@@ -38,6 +38,7 @@ object EnrichTriples {
 
     val result = spark.read.parquet(conf.input()).as[TrainingData]
       .repartition(conf.partitions())
+      .filter(row => row.sub.link != null && row.sub.link.nonEmpty)
       .map(row => {
 
         // Standard HTTP backend
@@ -95,7 +96,7 @@ object EnrichTriples {
 
       })
 
-    result.write.parquet(conf.output())
+    result.write.json(conf.output())
 
     spark.stop()
 
