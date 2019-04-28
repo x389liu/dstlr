@@ -94,7 +94,7 @@ object ExtractTriples {
             val doc = new CoreDocument(row.contents)
 
             if (row.published_date != null && row.published_date >= 0) {
-              doc.annotation().set(classOf[DocDateAnnotation], printFormat.format(new Date(row.published_date / 1000L)))
+              doc.annotation().set(classOf[DocDateAnnotation], printFormat.format(new Date(row.published_date)))
             }
 
             nlp.annotate(doc)
