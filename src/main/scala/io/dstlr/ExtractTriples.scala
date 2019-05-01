@@ -1,5 +1,6 @@
 package io.dstlr
 
+import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.{Date, Properties}
 
@@ -13,6 +14,7 @@ import org.apache.spark.sql.{Dataset, Row, SparkSession}
 
 import scala.collection.JavaConversions._
 import scala.collection.mutable.{ListBuffer, Map => MMap}
+import scala.xml.XML
 
 /**
   * Extract raw triples from documents on Solr using CoreNLP.
@@ -210,14 +212,23 @@ object ExtractTriples {
     new TripleRow(doc, "Mention", mention, "LINKS_TO", "Entity", uri, null)
   }
 
+  def getUri(text: String): String = {
+    val data = XML.load(new URL(s"http://192.168.1.110:1111/api/search/KeywordSearch?MaxHits=1&QueryString=${text}"))
+    val uri = (data \ "Result" \ "URI").text
+    uri.substring(uri.lastIndexOf("/") + 1, uri.length)
+  }
+
   def buildRelation(doc: String, sentence: CoreSentence, mentions: MMap[String, CoreEntityMention], triple: RelationTriple): TrainingData = {
+
+    val subUri = getUri(mentions(triple.subjectLemmaGloss()).text())
+    val objUri = getUri(mentions(triple.objectLemmaGloss()).text())
 
     val sub = new EntityData(
       triple.subjectTokenSpan().first(),
       triple.subjectTokenSpan().second(),
       triple.subjectGloss(),
       mentions(triple.subjectLemmaGloss()).entityType(),
-      mentions(triple.subjectLemmaGloss()).entity(),
+      subUri,
       null
     )
 
@@ -234,7 +245,7 @@ object ExtractTriples {
       triple.objectTokenSpan().second(),
       triple.objectGloss(),
       mentions(triple.objectLemmaGloss()).entityType(),
-      mentions(triple.objectLemmaGloss()).entity(),
+      objUri,
       normalized
     )
 

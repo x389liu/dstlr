@@ -39,6 +39,9 @@ package object dstlr {
     val neoPassword = opt[String](name = "neo4j.password", default = Some("password"))
     val neoBatchSize = opt[Int](name = "neo4j.batch.size", default = Some(10000))
 
+    // Misc
+    val lookupUri = opt[String](name = "lookup.uri", default = Some("192.168.1.110"))
+
     verify()
 
   }
