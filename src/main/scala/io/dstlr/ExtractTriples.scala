@@ -10,6 +10,7 @@ import edu.stanford.nlp.ling.CoreAnnotations.DocDateAnnotation
 import edu.stanford.nlp.pipeline.{CoreDocument, CoreEntityMention, CoreSentence, StanfordCoreNLP}
 import edu.stanford.nlp.simple.Document
 import org.apache.hadoop.fs.{FileSystem, Path}
+import org.apache.http.client.utils.URIBuilder
 import org.apache.spark.sql.{Dataset, Row, SparkSession}
 
 import scala.collection.JavaConversions._
@@ -24,7 +25,7 @@ object ExtractTriples {
   // Used for the full NER, KBP, and entity linking
   @transient lazy val nlp = new StanfordCoreNLP(new Properties() {
     {
-      setProperty("annotators", "tokenize,ssplit,pos,lemma,parse,ner,coref,kbp,entitylink")
+      setProperty("annotators", "tokenize,ssplit,pos,lemma,parse,ner,coref,kbp")
       setProperty("coref.algorithm", "statistical")
       setProperty("threads", "8")
       setProperty("parse.model", "edu/stanford/nlp/models/srparser/englishSR.ser.gz")
@@ -159,7 +160,7 @@ object ExtractTriples {
     // Test data
     spark.sparkContext.parallelize(Seq("Steven Hawking died on March 14, 2018. He died on 14 March 2018.", "Joseph S. Handler died on April 14, 2019."))
       .zipWithIndex()
-      .map(_.swap)
+      .map(doc => (doc._2.toString, doc._1))
       .toDF("id", "contents")
 
   }
@@ -213,7 +214,11 @@ object ExtractTriples {
   }
 
   def getUri(text: String): String = {
-    val data = XML.load(new URL(s"http://192.168.1.110:1111/api/search/KeywordSearch?MaxHits=1&QueryString=${text}"))
+    val url = new URIBuilder("http://192.168.1.110:1111/api/search/KeywordSearch")
+      .addParameter("MaxHits", "1")
+      .addParameter("QueryString", text)
+      .toString
+    val data = XML.load(new URL(url))
     val uri = (data \ "Result" \ "URI").text
     uri.substring(uri.lastIndexOf("/") + 1, uri.length)
   }
