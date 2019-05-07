@@ -1,0 +1,17 @@
+version: "3"
+services:
+    elassandra:
+        image: "strapdata/elassandra:6.2.3"
+        ports:
+            - "9042:9042" # Cassanda CQL
+            - "9200:9200" # Elasticsearch HTTP
+        volumes:
+            - /tuna1/scratch/ryan/volumes/elassandra:/var/lib/cassandra
+        environment:
+            - "ES_JAVA_OPTS=-Xmx31G"
+    kibana:
+        image: docker.elastic.co/kibana/kibana-oss:6.2.3
+        ports:
+            - "5601:5601" # Kibana Web UI
+        environment:
+            ELASTICSEARCH_URL: http://elassandra:9200
