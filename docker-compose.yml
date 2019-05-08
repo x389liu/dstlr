@@ -1,7 +1,7 @@
 version: "3"
 services:
     elassandra:
-        image: "strapdata/elassandra:6.2.3"
+        image: strapdata/elassandra:6.2.3
         ports:
             - "9042:9042" # Cassanda CQL
             - "9200:9200" # Elasticsearch HTTP
@@ -15,3 +15,8 @@ services:
             - "5601:5601" # Kibana Web UI
         environment:
             ELASTICSEARCH_URL: http://elassandra:9200
+    lookup:
+        image: dbpedia/lookup
+        ports:
+            - "1111:1111" # REST API
+        command: java -jar /opt/lookup/dbpedia-lookup-3.1-jar-with-dependencies.jar /opt/lookup/2015-10/
